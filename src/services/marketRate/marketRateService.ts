@@ -23,6 +23,8 @@ import { isLockdownEnabled } from "../../state/appState";
 dotenv.config();
 
 import { priceReviewService } from "../priceReviewService";
+import { webhookService } from "../webhook";
+import { anomalyDetectionService } from "../anomalyDetection";
 
 export class MarketRateService {
   private fetchers: Map<string, MarketRateFetcher> = new Map();
@@ -211,9 +213,14 @@ export class MarketRateService {
       };
 
       // Perform Anomaly Detection
-      const anomalyCheck = await anomalyDetectionService.checkAnomaly(normalizedCurrency, rate.rate);
+      const anomalyCheck = await anomalyDetectionService.checkAnomaly(
+        normalizedCurrency,
+        rate.rate,
+      );
       if (anomalyCheck.isAnomalous) {
-        console.warn(`[MarketRateService] Anomaly detected for ${normalizedCurrency}: Z-Score ${anomalyCheck.zScore.toFixed(2)}σ`);
+        console.warn(
+          `[MarketRateService] Anomaly detected for ${normalizedCurrency}: Z-Score ${anomalyCheck.zScore.toFixed(2)}σ`,
+        );
         await webhookService.sendPriorityAlert({
           currency: normalizedCurrency,
           rate: rate.rate,
@@ -284,8 +291,7 @@ export class MarketRateService {
 
               enrichedRate.contractSubmissionSkipped = false;
               enrichedRate.pendingMultiSig = true;
-              enrichedRate.multiSigPriceId =
-                signatureRequest.multiSigPriceId;
+              enrichedRate.multiSigPriceId = signatureRequest.multiSigPriceId;
             } else {
               const txHash = await this.stellarService.submitPriceUpdate(
                 normalizedCurrency,

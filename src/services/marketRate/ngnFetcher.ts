@@ -8,11 +8,8 @@ import {
   filterOutliers,
 } from "./types";
 import { withRetry } from "../../utils/retryUtil.js";
-import {
-  getNGNProviderWeight,
-  type NGNProviderWeightKey,
-} from "../../config/providerWeights.js";
 import { createFetcherLogger } from "../../utils/logger.js";
+import { MedianPriceService } from "./medianPriceService.js";
 
 type CoinGeckoPriceResponse = {
   stellar?: {
@@ -49,7 +46,6 @@ type NGNPriceCandidate = {
   rate: number;
   timestamp: Date;
   source: string;
-  providerKey: NGNProviderWeightKey;
 };
 
 function parseAmount(value: string | undefined): number | null {
@@ -75,6 +71,7 @@ export class NGNRateFetcher implements MarketRateFetcher {
 
   private readonly usdToNgnUrl = "https://open.er-api.com/v6/latest/USD";
   private logger = createFetcherLogger("NGNRate");
+  private medianPriceService = new MedianPriceService();
 
   private vtpassBase(): string {
     return (
@@ -190,7 +187,6 @@ export class NGNRateFetcher implements MarketRateFetcher {
             rate: usd * vt.ngnPerUsd,
             timestamp: ts,
             source: "VTpass variation + CoinGecko (XLM/USD)",
-            providerKey: "vtpassCoinGeckoUsd",
           });
         }
       }
@@ -231,7 +227,6 @@ export class NGNRateFetcher implements MarketRateFetcher {
           rate: stellarPrice.ngn,
           timestamp: lastUpdatedAt,
           source: "CoinGecko (direct NGN)",
-          providerKey: "coinGeckoDirectNgn",
         });
       }
     } catch (error) {
@@ -299,7 +294,6 @@ export class NGNRateFetcher implements MarketRateFetcher {
             timestamp:
               fxTimestamp > lastUpdatedAt ? fxTimestamp : lastUpdatedAt,
             source: "CoinGecko + ExchangeRate API (USD->NGN)",
-            providerKey: "coinGeckoExchangeRateUsdNgn",
           });
         }
       }
@@ -317,29 +311,39 @@ export class NGNRateFetcher implements MarketRateFetcher {
       throw error;
     }
 
-    const filteredRateValues = filterOutliers(
-      prices.map((p) => p.rate).filter((rate) => rate > 0),
-    );
+    const rateValues = prices
+      .map((price) => price.rate)
+      .filter((rate) => Number.isFinite(rate) && rate > 0);
+    const filteredRateValues = filterOutliers(rateValues);
     const filteredPrices = prices.filter((price) =>
       filteredRateValues.includes(price.rate),
     );
-    const pricesToUse = filteredPrices.length > 0 ? filteredPrices : prices;
+    const pricesToUse =
+      filteredPrices.length >= 3 ? filteredPrices : prices;
 
-    const mostRecentTimestamp = prices.reduce(
+    if (pricesToUse.length < 3) {
+      const error = new Error(
+        `Need at least 3 price sources for median calculation, got ${pricesToUse.length}`,
+      );
+      this.logger.fetcherError(error.message, {
+        attemptedSources: 3,
+        pricesLength: pricesToUse.length,
+      });
+      throw error;
+    }
+
+    const mostRecentTimestamp = pricesToUse.reduce(
       (latest, p) => (p.timestamp > latest ? p.timestamp : latest),
-      prices[0]?.timestamp ?? new Date(),
+      pricesToUse[0]?.timestamp ?? new Date(),
     );
 
-    const weightedRate = calculateWeightedAverage(
-      pricesToUse.map((price) => ({
-        value: price.rate,
-        weight: getNGNProviderWeight(price.providerKey),
-      })),
+    const medianRate = this.medianPriceService.calculateMedian(
+      pricesToUse.map((price) => price.rate),
     );
 
     return {
       currency: "NGN",
-      rate: weightedRate,
+      rate: medianRate,
       timestamp: mostRecentTimestamp,
       source: `Weighted average of ${pricesToUse.length} sources (outliers filtered)`,
       rawResponses,
