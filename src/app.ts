@@ -25,12 +25,11 @@ import { maintenanceMiddleware } from "./middleware/maintenanceMiddleware";
 
 import { rateLimitMiddleware } from "./middleware/rateLimitMiddleware";
 
-import {
-  tracingMiddleware,
-  axiosTracingMiddleware,
-} from "./middleware/tracingMiddleware";
+import { tracingMiddleware, axiosTracingMiddleware } from "./middleware/tracingMiddleware";
+import { jwtMiddleware } from "./middleware/jwtMiddleware";
 import adminRouter from "./routes/admin";
 
+import authRouter from "./routes/auth";
 import assetsRouter from "./routes/assets";
 
 import derivedAssetsRouter from "./routes/derivedAssets";
@@ -147,11 +146,15 @@ app.get(
   }),
 );
 
+
+
+app.use("/api/v1/auth", authRouter);
+
 app.use("/api", rateLimitMiddleware);
 
 app.use("/api", apiKeyMiddleware);
 
-app.use("/api/v1", apiKeyMiddleware);
+app.use("/api", jwtMiddleware);
 
 // Ed25519 signature verification for relayer payloads (Issue #225)
 app.use("/api/v1/price-updates", signatureVerificationMiddleware);
