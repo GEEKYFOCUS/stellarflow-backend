@@ -1,5 +1,6 @@
-import dotenv from "dotenv";
 import { SorobanRpc, xdr } from "@stellar/stellar-sdk";
+import stellarProvider from "../lib/stellarProvider";
+import { logger } from "../utils/logger";
 
 dotenv.config();
 
@@ -19,19 +20,11 @@ interface ContractSanityCheckResult {
 export class ContractSanityCheckService {
   private readonly CONTRACT_ID: string;
   private readonly NETWORK: string;
-  private readonly rpcUrl: string;
   private readonly TIMEOUT_MS = 10000; // 10 second timeout for contract reads
 
   constructor() {
     this.CONTRACT_ID = process.env.CONTRACT_ID || "";
     this.NETWORK = process.env.STELLAR_NETWORK || "TESTNET";
-
-    // Configure RPC URL based on network
-    if (this.NETWORK === "PUBLIC") {
-      this.rpcUrl = "https://rpc.mainnet.stellar.org";
-    } else {
-      this.rpcUrl = "https://rpc.testnet.stellar.org";
-    }
   }
 
   /**
@@ -46,7 +39,7 @@ export class ContractSanityCheckService {
 
     // Skip check if CONTRACT_ID is not configured
     if (!this.CONTRACT_ID) {
-      console.warn(
+      logger.warn(
         "⚠️ CONTRACT_ID not configured - skipping contract sanity check",
       );
       return {
@@ -56,20 +49,19 @@ export class ContractSanityCheckService {
       };
     }
 
-    console.log(
+    logger.networkInfo(
       `🔍 Performing contract sanity check on ${this.CONTRACT_ID} (${this.NETWORK})`,
     );
 
     try {
-      const server = new SorobanRpc.Server(this.rpcUrl, {
-        allowHttp: this.NETWORK === "TESTNET",
-      });
+      // Use the shared StellarProvider so it respects the current RPC failover state
+      const server = stellarProvider.getRpcServer();
 
       // Attempt to read contract version (low-cost read)
       const versionResult = await this.tryGetVersion(server);
 
       if (versionResult.success) {
-        console.log(
+        logger.networkInfo(
           `✅ Contract sanity check passed - Version: ${versionResult.version}`,
         );
         return {
@@ -84,7 +76,7 @@ export class ContractSanityCheckService {
       const activeResult = await this.tryIsActive(server);
 
       if (activeResult.success) {
-        console.log(
+        logger.networkInfo(
           `✅ Contract sanity check passed - Contract is active`,
         );
         return {
@@ -95,16 +87,23 @@ export class ContractSanityCheckService {
       }
 
       // Both checks failed
-      const error = versionResult.error || activeResult.error || "Unknown error";
-      console.error(`❌ Contract sanity check failed: ${error}`);
+      const errorStr = versionResult.error || activeResult.error || "Unknown error";
+      const origError = versionResult.originalError || activeResult.originalError;
+      
+      if (origError) {
+        stellarProvider.reportRpcFailure(origError);
+      }
+
+      logger.networkError(`❌ Contract sanity check failed: ${errorStr}`);
       return {
         ...result,
-        error,
+        error: errorStr,
       };
     } catch (error) {
+      stellarProvider.reportRpcFailure(error);
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.error(`❌ Contract sanity check error: ${errorMessage}`);
+      logger.networkError(`❌ Contract sanity check error: ${errorMessage}`);
       return {
         ...result,
         error: errorMessage,
@@ -118,7 +117,7 @@ export class ContractSanityCheckService {
    */
   private async tryGetVersion(
     server: SorobanRpc.Server,
-  ): Promise<{ success: boolean; version?: string; error?: string }> {
+  ): Promise<{ success: boolean; version?: string; error?: string; originalError?: any }> {
     try {
       // Attempt to read a 'version' function from the contract
       // This is a common pattern in Soroban contracts
@@ -141,6 +140,7 @@ export class ContractSanityCheckService {
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
+        originalError: error,
       };
     }
   }
@@ -151,7 +151,7 @@ export class ContractSanityCheckService {
    */
   private async tryIsActive(
     server: SorobanRpc.Server,
-  ): Promise<{ success: boolean; isActive?: boolean; error?: string }> {
+  ): Promise<{ success: boolean; isActive?: boolean; error?: string; originalError?: any }> {
     try {
       const contractAddress = this.CONTRACT_ID;
 
@@ -182,6 +182,7 @@ export class ContractSanityCheckService {
       return {
         success: false,
         error: errorMessage,
+        originalError: error,
       };
     }
   }

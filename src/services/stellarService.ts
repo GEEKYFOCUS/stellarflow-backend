@@ -14,6 +14,7 @@ import stellarProvider from "../lib/stellarProvider";
 import { sequenceManager } from "./sequence-manager";
 import { assertSigningAllowed } from "../state/appState";
 import { signer } from "../signer";
+import { logger } from "../utils/logger";
 
 dotenv.config();
 
@@ -110,7 +111,7 @@ export class StellarService {
       baseFee,
     );
 
-    console.info(`✅ Price update for ${currency} confirmed. Hash: ${result.hash}`);
+    logger.networkInfo(`✅ Price update for ${currency} confirmed. Hash: ${result.hash}`, { hash: result.hash });
     return result.hash;
   }
 
@@ -155,7 +156,7 @@ export class StellarService {
     );
 
     const currencies = updates.map((u) => u.currency).join(", ");
-    console.info(`✅ Batched price update for [${currencies}] confirmed. Hash: ${result.hash}`);
+    logger.networkInfo(`✅ Batched price update for [${currencies}] confirmed. Hash: ${result.hash}`, { hash: result.hash, currencies });
     return result.hash;
   }
 
@@ -193,7 +194,7 @@ export class StellarService {
       baseFee,
     );
 
-    console.info(`✅ Multi-signed price update for ${currency} confirmed. Hash: ${result.hash}`);
+    logger.networkInfo(`✅ Multi-signed price update for ${currency} confirmed. Hash: ${result.hash}`, { hash: result.hash });
     return result.hash;
   }
 
@@ -245,7 +246,7 @@ export class StellarService {
         const resultCode = error.response?.data?.extras?.result_codes?.transaction;
 
         if (resultCode === "tx_bad_seq" || this.isLocalTimeoutError(error)) {
-          console.warn(
+          logger.warn(
             "⚠️ SequenceManager: stale or invalid local transaction assignment detected. Invalidating sequence and retrying...",
           );
           const publicKey = await this.getPublicKey();
@@ -258,7 +259,7 @@ export class StellarService {
         }
 
         if (this.isStuckError(error) && attempt <= maxRetries) {
-          console.warn(
+          logger.warn(
             `⚠️ Transaction stuck, expired, or fee too low (Attempt ${attempt}). Recycling locally and retrying...`,
           );
           if (!this.shouldRecycleImmediately(error)) {
@@ -333,7 +334,7 @@ export class StellarService {
 
             transaction.signatures.push(decoratedSignature);
           } catch (error) {
-            console.error(`[StellarService] Failed to add signature for ${sig.signerPublicKey}:`, error);
+            logger.error(`[StellarService] Failed to add signature for ${sig.signerPublicKey}:`, { error });
           }
         }
 
@@ -342,7 +343,7 @@ export class StellarService {
         const resultCode = error.response?.data?.extras?.result_codes?.transaction;
 
         if (resultCode === "tx_bad_seq" || this.isLocalTimeoutError(error)) {
-          console.warn(
+          logger.warn(
             "⚠️ SequenceManager: stale or invalid multi-sig assignment detected. Invalidating sequence...",
           );
           const publicKey = await this.getPublicKey();
@@ -410,7 +411,7 @@ export class StellarService {
 
             activePending.timedOut = true;
             this.pendingTimeBoundTransactions.delete(pending.hash);
-            console.warn(
+            logger.warn(
               `[StellarService] Transaction ${pending.hash} exceeded ${this.TRANSACTION_TIME_BOUND_SECONDS}s time-bound. Recycling local assignment.`,
             );
             reject(
